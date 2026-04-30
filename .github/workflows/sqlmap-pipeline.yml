@@ -89,7 +89,6 @@ jobs:
             --threads=3 \
             --delay=1 \
             --tamper=between,randomcase,space2comment,charencode \
-            --ignore-waf \
             --skip-waf \
             --dbs \
             --output-dir=sqlmap_output \
